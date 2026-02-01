@@ -12,13 +12,14 @@ jobs:
       - name: Enable RDP
         run: |
           reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           sc start TermService
 
-      - name: Create RDP User (net user)
+      - name: Create RDP User (GUARANTEED)
         run: |
-          net user RDP Rdp12345! /add
-          net localgroup administrators RDP /add
+          net user RDP P@ssw0rd123! /add
+          net localgroup Administrators RDP /add
           net localgroup "Remote Desktop Users" RDP /add
 
       - name: Install ZeroTier
@@ -32,13 +33,14 @@ jobs:
           timeout /t 20
           "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks
 
-      - name: Info
+      - name: Show RDP Info
         run: |
-          echo =====================
-          echo USER: RDP
-          echo PASS: Rdp12345!
-          echo =====================
+          echo =========================
+          echo RDP READY
+          echo USER : RDP
+          echo PASS : P@ssw0rd123!
+          echo =========================
 
-      - name: Keep Alive
+      - name: Keep Runner Alive
         run: |
           timeout /t 3600
