@@ -5,6 +5,7 @@ jobs:
   secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 3600
+
     steps:
       - name: Configure Core RDP Settings
         run: |
@@ -55,24 +56,34 @@ jobs:
 
       - name: Establish ZeroTier Connection
         run: |
-          $zt = "$env:ProgramFiles\ZeroTier\One\zerotier-cli.exe"
+          # تحديد مسار CLI الصحيح
+          if (Test-Path "$env:ProgramFiles\ZeroTier\One\zerotier-cli.exe") {
+              $zt = "$env:ProgramFiles\ZeroTier\One\zerotier-cli.exe"
+          } elseif (Test-Path "$env:ProgramFiles(x86)\ZeroTier\One\zerotier-cli.exe") {
+              $zt = "$env:ProgramFiles(x86)\ZeroTier\One\zerotier-cli.exe"
+          } else {
+              Write-Error "ZeroTier CLI not found!"
+              exit 1
+          }
 
+          # الانضمام للشبكة
           & $zt join ${{ secrets.ZEROTIER_NETWORK_ID }}
 
+          # انتظار الحصول على IP
           $ztIP = $null
           $retries = 0
           while (-not $ztIP -and $retries -lt 12) {
-            $ztIP = (& $zt listnetworks |
-              Select-String -Pattern '\d+\.\d+\.\d+\.\d+' |
-              ForEach-Object { $_.Matches.Value } |
-              Select-Object -First 1)
-            Start-Sleep -Seconds 5
-            $retries++
+              $ztIP = (& $zt listnetworks |
+                  Select-String -Pattern '\d+\.\d+\.\d+\.\d+' |
+                  ForEach-Object { $_.Matches.Value } |
+                  Select-Object -First 1)
+              Start-Sleep -Seconds 5
+              $retries++
           }
 
           if (-not $ztIP) {
-            Write-Error "ZeroTier IP not assigned. Exiting."
-            exit 1
+              Write-Error "ZeroTier IP not assigned. Exiting."
+              exit 1
           }
 
           echo "ZEROTIER_IP=$ztIP" >> $env:GITHUB_ENV
@@ -82,8 +93,8 @@ jobs:
           Write-Host "ZeroTier IP: $env:ZEROTIER_IP"
           $testResult = Test-NetConnection -ComputerName $env:ZEROTIER_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
-            Write-Error "TCP connection to RDP port 3389 failed"
-            exit 1
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
           }
           Write-Host "TCP connectivity successful!"
 
@@ -96,6 +107,6 @@ jobs:
           Write-Host "=================="
 
           while ($true) {
-            Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
-            Start-Sleep -Seconds 300
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
           }
