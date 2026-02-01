@@ -1,4 +1,4 @@
-name: RDP-ZeroTier-CLEAN
+name: RDP-ZeroTier-Final
 
 on:
   workflow_dispatch:
@@ -9,13 +9,19 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Enable RDP
+      - name: Enable RDP (Safe Start)
         run: |
+          # Enable RDP
           reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
-          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
-          sc start TermService
 
-      - name: Create RDP User (NO POWERSHELL)
+          # Open firewall for RDP
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+
+          # Start service only if not running
+          $svc = Get-Service TermService
+          if ($svc.Status -ne "Running") { Start-Service TermService }
+
+      - name: Create RDP User (Guaranteed)
         run: |
           net user RDP P@ssw0rd123! /add
           net localgroup Administrators RDP /add
@@ -26,17 +32,20 @@ jobs:
           curl -L https://download.zerotier.com/dist/ZeroTier%20One.msi -o zt.msi
           msiexec /i zt.msi /quiet /norestart
 
-      - name: Join ZeroTier
+      - name: Join ZeroTier Network
         run: |
           "C:\Program Files\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
           timeout /t 20
           "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks
 
-      - name: Info
+      - name: Show RDP Info
         run: |
-          echo USER: RDP
-          echo PASS: P@ssw0rd123!
+          echo =========================
+          echo RDP READY
+          echo USER : RDP
+          echo PASS : P@ssw0rd123!
+          echo =========================
 
-      - name: Keep Alive
+      - name: Keep Runner Alive
         run: |
           timeout /t 3600
