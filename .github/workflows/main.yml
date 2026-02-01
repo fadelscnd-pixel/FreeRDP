@@ -11,44 +11,34 @@ jobs:
     steps:
       - name: Enable RDP
         run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-            -Name "fDenyTSConnections" -Value 0
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service TermService -Force
+          sc start TermService
 
-      - name: Create RDP User (simple)
+      - name: Create RDP User (net user)
         run: |
-          $pass = ConvertTo-SecureString "Rdp@12345" -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $pass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-
-          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
-          echo "RDP_PASS=Rdp@12345" >> $env:GITHUB_ENV
+          net user RDP Rdp12345! /add
+          net localgroup administrators RDP /add
+          net localgroup "Remote Desktop Users" RDP /add
 
       - name: Install ZeroTier
         run: |
-          Invoke-WebRequest https://download.zerotier.com/dist/ZeroTier%20One.msi -OutFile zt.msi
-          Start-Process msiexec.exe -ArgumentList "/i zt.msi /quiet /norestart" -Wait
+          curl -L https://download.zerotier.com/dist/ZeroTier%20One.msi -o zt.msi
+          msiexec /i zt.msi /quiet /norestart
 
       - name: Join ZeroTier Network
         run: |
-          & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
-          Start-Sleep 20
-          & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks
+          "C:\Program Files\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
+          timeout /t 20
+          "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks
 
-      - name: Show RDP Info
+      - name: Info
         run: |
-          Write-Host "======================="
-          Write-Host "RDP USER: RDP"
-          Write-Host "RDP PASS: Rdp@12345"
-          Write-Host "ZeroTier IP:"
-          & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks
-          Write-Host "======================="
+          echo =====================
+          echo USER: RDP
+          echo PASS: Rdp12345!
+          echo =====================
 
       - name: Keep Alive
         run: |
-          while ($true) {
-            Write-Host "RDP is running..."
-            Start-Sleep 300
-          }
+          timeout /t 3600
