@@ -5,58 +5,97 @@ jobs:
   secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 3600
-
     steps:
       - name: Configure Core RDP Settings
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+
           netsh advfirewall firewall delete rule name="RDP-ZeroTier" 2>$null
           netsh advfirewall firewall add rule name="RDP-ZeroTier" dir=in action=allow protocol=TCP localport=3389
+
           Restart-Service -Name TermService -Force
+
       - name: Create RDP User with Secure Password
         run: |
           Add-Type -AssemblyName System.Security
-          $chars = @{
-            U=[char[]](65..90); L=[char[]](97..122)
-            N=[char[]](48..57); S=([char[]](33..47)+[char[]](58..64)+[char[]](91..96)+[char[]](123..126))
+          $charSet = @{
+            Upper = [char[]](65..90)
+            Lower = [char[]](97..122)
+            Number = [char[]](48..57)
+            Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
           }
-          $p = @()
-          $p += $chars.U | Get-Random -Count 4
-          $p += $chars.L | Get-Random -Count 4
-          $p += $chars.N | Get-Random -Count 4
-          $p += $chars.S | Get-Random -Count 4
-          $pw = -join ($p | Sort-Object {Get-Random})
-          $sp = ConvertTo-SecureString $pw -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $sp -AccountNeverExpires
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          echo "RDP_CREDS=User: RDP | Password: $pw" >> $env:GITHUB_ENV
+
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+
+          if (-not (Get-LocalUser -Name "RDP")) {
+            Write-Error "User creation failed"
+            exit 1
+          }
+
       - name: Install ZeroTier
         run: |
-          $url="https://download.zerotier.com/dist/ZeroTier%20One.msi"
-          $msi="$env:TEMP\zt.msi"
-          Invoke-WebRequest $url -OutFile $msi
-          Start-Process msiexec.exe -ArgumentList "/i","`"$msi`"","/quiet","/norestart" -Wait
-          Remove-Item $msi -Force
-      - name: Join ZeroTier Network
+          $ztUrl = "https://download.zerotier.com/dist/ZeroTier%20One.msi"
+          $installerPath = "$env:TEMP\zerotier.msi"
+          Invoke-WebRequest -Uri $ztUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish ZeroTier Connection
         run: |
-          $zt="$env:ProgramFiles\ZeroTier\One\zerotier-cli.exe"
+          $zt = "$env:ProgramFiles\ZeroTier\One\zerotier-cli.exe"
+
           & $zt join ${{ secrets.ZEROTIER_NETWORK_ID }}
-          $ip=$null; $i=0
-          while(-not $ip -and $i -lt 12){
-            $ip = (& $zt listnetworks | Select-String -Pattern '\d+\.\d+\.\d+\.\d+' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1)
-            Start-Sleep 5; $i++
+
+          $ztIP = $null
+          $retries = 0
+          while (-not $ztIP -and $retries -lt 12) {
+            $ztIP = (& $zt listnetworks |
+              Select-String -Pattern '\d+\.\d+\.\d+\.\d+' |
+              ForEach-Object { $_.Matches.Value } |
+              Select-Object -First 1)
+            Start-Sleep -Seconds 5
+            $retries++
           }
-          if(-not $ip){ throw "ZeroTier IP not assigned" }
-          echo "ZEROTIER_IP=$ip" >> $env:GITHUB_ENV
+
+          if (-not $ztIP) {
+            Write-Error "ZeroTier IP not assigned. Exiting."
+            exit 1
+          }
+
+          echo "ZEROTIER_IP=$ztIP" >> $env:GITHUB_ENV
+
       - name: Verify RDP Accessibility
         run: |
-          Test-NetConnection $env:ZEROTIER_IP -Port 3389 | Out-Null
+          Write-Host "ZeroTier IP: $env:ZEROTIER_IP"
+          $testResult = Test-NetConnection -ComputerName $env:ZEROTIER_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+            Write-Error "TCP connection to RDP port 3389 failed"
+            exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
       - name: Maintain Connection
         run: |
+          Write-Host "=== RDP ACCESS ==="
           Write-Host "Address: $env:ZEROTIER_IP"
           Write-Host "Username: RDP"
-          Write-Host "Password: $env:RDP_CREDS"
-          while($true){ Start-Sleep 300 }
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "=================="
+
+          while ($true) {
+            Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+            Start-Sleep -Seconds 300
+          }
