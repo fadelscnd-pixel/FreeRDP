@@ -1,0 +1,42 @@
+name: RDP-ZeroTier-CLEAN
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Enable RDP
+        run: |
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          sc start TermService
+
+      - name: Create RDP User (NO POWERSHELL)
+        run: |
+          net user RDP P@ssw0rd123! /add
+          net localgroup Administrators RDP /add
+          net localgroup "Remote Desktop Users" RDP /add
+
+      - name: Install ZeroTier
+        run: |
+          curl -L https://download.zerotier.com/dist/ZeroTier%20One.msi -o zt.msi
+          msiexec /i zt.msi /quiet /norestart
+
+      - name: Join ZeroTier
+        run: |
+          "C:\Program Files\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
+          timeout /t 20
+          "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks
+
+      - name: Info
+        run: |
+          echo USER: RDP
+          echo PASS: P@ssw0rd123!
+
+      - name: Keep Alive
+        run: |
+          timeout /t 3600
