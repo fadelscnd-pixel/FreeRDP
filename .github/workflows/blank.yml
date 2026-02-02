@@ -1,7 +1,7 @@
 name: RDP
 
 on:
-  workflow_dispatch
+  workflow_dispatch:
 
 jobs:
   secure-rdp:
@@ -30,7 +30,7 @@ jobs:
         run: |
           Add-Type -AssemblyName System.Security
           $chars = (65..90)+(97..122)+(48..57)+(33..47)
-          $password = -join (Get-Random -InputObject $chars -Count 20 | % {[char]$_})
+          $password = -join (Get-Random -InputObject $chars -Count 20 | ForEach-Object {[char]$_})
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
@@ -50,44 +50,50 @@ jobs:
           Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
 
       - name: Join ZeroTier Network and Wait for Approval
-  run: |
-    & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
+        run: |
+          $zt = "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"
 
-    Write-Host "Waiting for ZeroTier authorization..."
+          & $zt join ${{ secrets.ZEROTIER_NETWORK_ID }}
 
-    $ip = $null
-    $status = $null
+          Write-Host "Waiting for ZeroTier authorization..."
+          Write-Host "Authorize this node from ZeroTier Central"
 
-    for ($i = 0; $i -lt 60; $i++) {
-      $net = & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" listnetworks
+          $ip = $null
 
-      if ($net -match "OK") {
-        $ip = ($net | Select-String "OK").ToString().Split() |
-              Where-Object { $_ -match "\d+\.\d+\.\d+\.\d+" }
-        break
-      }
+          for ($i = 0; $i -lt 60; $i++) {
+            $net = & $zt listnetworks
 
-      Start-Sleep -Seconds 5
-    }
+            if ($net -match "OK") {
+              $ip = ($net | Select-String "OK").ToString().Split() |
+                    Where-Object { $_ -match "\d+\.\d+\.\d+\.\d+" }
+              break
+            }
 
-    if (-not $ip) {
-      Write-Host "Still not authorized, but workflow continues waiting..."
-      while ($true) {
-        Start-Sleep 300
-      }
-    }
+            Start-Sleep -Seconds 5
+          }
 
-    echo "ZEROTIER_IP=$ip" >> $env:GITHUB_ENV
+          if (-not $ip) {
+            Write-Host "Still not authorized. Waiting indefinitely..."
+            while ($true) {
+              Start-Sleep 300
+            }
+          }
+
+          echo "ZEROTIER_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Verify RDP
         run: |
+          Write-Host "ZeroTier IP: $env:ZEROTIER_IP"
           Test-NetConnection $env:ZEROTIER_IP -Port 3389
 
-      - name: Keep Alive
+      - name: Keep Connection Alive
         run: |
-          Write-Host "RDP IP: $env:ZEROTIER_IP"
-          Write-Host "User: RDP"
-          Write-Host "Password: $env:RDP_PASSWORD"
+          Write-Host "=============================="
+          Write-Host " RDP READY"
+          Write-Host " IP: $env:ZEROTIER_IP"
+          Write-Host " USER: RDP"
+          Write-Host " PASS: $env:RDP_PASSWORD"
+          Write-Host "=============================="
 
           while ($true) {
             Start-Sleep 300
