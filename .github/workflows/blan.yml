@@ -49,24 +49,35 @@ jobs:
           Invoke-WebRequest $url -OutFile $msi
           Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
 
-      - name: Join ZeroTier Network
-        run: |
-          & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
+      - name: Join ZeroTier Network and Wait for Approval
+  run: |
+    & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
 
-          $ip = $null
-          for ($i=0; $i -lt 12; $i++) {
-            $net = & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" listnetworks
-            $ip = ($net | Select-String -Pattern "OK").ToString().Split() | Where-Object {$_ -match "\d+\.\d+\.\d+\.\d+"}
-            if ($ip) { break }
-            Start-Sleep 5
-          }
+    Write-Host "Waiting for ZeroTier authorization..."
 
-          if (-not $ip) {
-            Write-Error "ZeroTier IP not assigned (network not authorized?)"
-            exit 1
-          }
+    $ip = $null
+    $status = $null
 
-          echo "ZEROTIER_IP=$ip" >> $env:GITHUB_ENV
+    for ($i = 0; $i -lt 60; $i++) {
+      $net = & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" listnetworks
+
+      if ($net -match "OK") {
+        $ip = ($net | Select-String "OK").ToString().Split() |
+              Where-Object { $_ -match "\d+\.\d+\.\d+\.\d+" }
+        break
+      }
+
+      Start-Sleep -Seconds 5
+    }
+
+    if (-not $ip) {
+      Write-Host "Still not authorized, but workflow continues waiting..."
+      while ($true) {
+        Start-Sleep 300
+      }
+    }
+
+    echo "ZEROTIER_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Verify RDP
         run: |
