@@ -1,0 +1,94 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" -Value 0 -Force
+
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" -Value 0 -Force
+
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "SecurityLayer" -Value 0 -Force
+
+          netsh advfirewall firewall delete rule name="RDP-ZeroTier" 2>$null
+          netsh advfirewall firewall add rule name="RDP-ZeroTier" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          Restart-Service TermService -Force
+
+      - name: Create RDP User
+        run: |
+          Add-Type -AssemblyName System.Security
+          $chars = (65..90)+(97..122)+(48..57)+(33..47)
+          $password = -join (Get-Random -InputObject $chars -Count 20 | % {[char]$_})
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
+            New-LocalUser "RDP" -Password $secure -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators RDP
+          Add-LocalGroupMember "Remote Desktop Users" RDP
+
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+
+      - name: Install ZeroTier
+        run: |
+          $url = "https://download.zerotier.com/dist/ZeroTier%20One.msi"
+          $msi = "$env:TEMP\zerotier.msi"
+          Invoke-WebRequest $url -OutFile $msi
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
+
+      - name: Join ZeroTier Network and Wait for Approval
+  run: |
+    & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" join ${{ secrets.ZEROTIER_NETWORK_ID }}
+
+    Write-Host "Waiting for ZeroTier authorization..."
+
+    $ip = $null
+    $status = $null
+
+    for ($i = 0; $i -lt 60; $i++) {
+      $net = & "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat" listnetworks
+
+      if ($net -match "OK") {
+        $ip = ($net | Select-String "OK").ToString().Split() |
+              Where-Object { $_ -match "\d+\.\d+\.\d+\.\d+" }
+        break
+      }
+
+      Start-Sleep -Seconds 5
+    }
+
+    if (-not $ip) {
+      Write-Host "Still not authorized, but workflow continues waiting..."
+      while ($true) {
+        Start-Sleep 300
+      }
+    }
+
+    echo "ZEROTIER_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Verify RDP
+        run: |
+          Test-NetConnection $env:ZEROTIER_IP -Port 3389
+
+      - name: Keep Alive
+        run: |
+          Write-Host "RDP IP: $env:ZEROTIER_IP"
+          Write-Host "User: RDP"
+          Write-Host "Password: $env:RDP_PASSWORD"
+
+          while ($true) {
+            Start-Sleep 300
+          }
